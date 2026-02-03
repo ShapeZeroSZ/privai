@@ -1,0 +1,23 @@
+.TH PRIVAI 1 &quot;Feb 3, 2026&quot; &quot;1.0&quot; &quot;PrivAI&quot;
+.SH NAME
+privai \\- TUI chat client for Ollama dev agent
+.SH SYNOPSIS
+.B privai
+.SH DESCRIPTION
+PrivAI is a terminal user interface for chatting with a local Ollama LLM (default llama3.2).
+It injects workspace context (ls, git) into prompts for dev assistance.
+.SH OPTIONS
+None (TUI app).
+.SH KEYS
+Enter \\- Send message
+q, Ctrl+C \\- Quit
+Tab \\- Focus input
+Esc \\- Blur input
+.SH PREREQUISITES
+Ollama running on localhost:11434 with llama3.2 model.
+.SH FILES
+/usr/local/bin/privai
+.SH SEE ALSO
+ollama(1), bubbletea(1)
+.SH AUTHOR
+cli_craftsman (The Foundry)
