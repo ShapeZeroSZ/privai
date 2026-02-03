@@ -9,16 +9,30 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"bufio"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/bubbles/textinput"
 )
 
-const (
-	ollamaURL = "http://localhost:11434/api/chat"
-	defaultModel = "llama3.2"
+var (
+	ollamaURL string
+	defaultModel string
 )
+
+func init() {
+	ollamaBase := os.Getenv("OLLAMA_BASE_URL")
+	if ollamaBase == "" {
+		ollamaBase = "http://localhost:11434"
+	}
+	ollamaURL = ollamaBase + "/api/chat"
+
+	defaultModel = os.Getenv("OLLAMA_MODEL")
+	if defaultModel == "" {
+		defaultModel = "llama3.2"
+	}
+}
 
 type message struct {
 	text string
@@ -116,7 +130,7 @@ func sendMessage(userInput string) tea.Cmd {
 				{"role": "system", "content": "You are a privacy-first AI dev agent. Help with code, files, git. Suggest commands in `shell: command`."},
 				{"role": "user", "content": fullPrompt},
 			},
-			"stream": false,
+			"stream": true,
 		}
 
 		jsonData, err := json.Marshal(body)
@@ -134,17 +148,27 @@ func sendMessage(userInput string) tea.Cmd {
 			return resultMsg{err: fmt.Sprintf("HTTP %d", resp.StatusCode)}
 		}
 
-		var response struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
+		content := ""
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			var line map[string]interface{}
+			if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+				continue
+			}
+			if msgI, ok := line["message"].(map[string]interface{}); ok {
+				if delta, ok := msgI["content"].(string); ok && delta != "" {
+					content += delta
+				}
+			}
+			if done, ok := line["done"].(bool); ok && done {
+				break
+			}
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			body, _ := io.ReadAll(resp.Body)
-			return resultMsg{err: fmt.Sprintf("Decode error: %v body: %s", err, string(body))}
+		if err := scanner.Err(); err != nil {
+			return resultMsg{err: err.Error()}
 		}
 
-		return resultMsg{content: response.Message.Content}
+		return resultMsg{content: content}
 	}
 }
 
