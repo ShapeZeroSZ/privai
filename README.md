@@ -15,10 +15,7 @@ A terminal-based chat interface for Ollama, tailored for development workflows. 
 
 ## Installation
 ```bash
-go mod init privai
-go mod tidy
-go build -o privai
-sudo cp privai /usr/local/bin/
+make install
 ```
 
 ## Usage
@@ -27,8 +24,8 @@ sudo cp privai /usr/local/bin/
 ```
 
 - Type your query and press Enter
-- q or Ctrl+C to quit
-- Tab/Esc for input focus
+- Ctrl+C to quit (or Esc to leave the input, then q)
+- Tab to refocus the input
 
 ## Context Sent to AI
 - Current directory listing
@@ -38,7 +35,7 @@ sudo cp privai /usr/local/bin/
 AI is prompted as: \"You are a privacy-first AI dev agent. Help with code, files, git. Suggest commands in `shell: command`.\"
 
 ## Customization
-- Edit `ollamaURL`, `defaultModel` in main.go
+- Set `OLLAMA_BASE_URL` (default `http://localhost:11434`) and `OLLAMA_MODEL` (default `llama3.2`)
 - Modify system prompt
 
 ## Completions

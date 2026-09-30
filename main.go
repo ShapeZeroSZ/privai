@@ -1,23 +1,22 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
-	"bufio"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/bubbles/textinput"
 )
 
 var (
-	ollamaURL string
+	ollamaURL    string
 	defaultModel string
 )
 
@@ -34,18 +33,21 @@ func init() {
 	}
 }
 
+const systemPrompt = "You are a privacy-first AI dev agent. Help with code, files, git. Suggest commands in `shell: command`."
+
 type message struct {
 	text string
 	user bool
 }
 
 type model struct {
-	messages   []message
-	input      textinput.Model
-	sending    bool
-	err        string
-	height     int
-	width      int
+	messages []message
+	input    textinput.Model
+	sending  bool
+	stream   chan tea.Msg
+	err      string
+	height   int
+	width    int
 }
 
 func initialModel() model {
@@ -54,11 +56,11 @@ func initialModel() model {
 	ti.Focus()
 
 	return model{
-		input:     ti,
-		messages:  []message{},
-		sending:   false,
-		height:    20,
-		width:     80,
+		input:    ti,
+		messages: []message{},
+		sending:  false,
+		height:   20,
+		width:    80,
 	}
 }
 
@@ -77,19 +79,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			return m, tea.Quit
+		case "q":
+			// Only quit when not typing, so messages can contain "q".
+			if !m.input.Focused() {
+				return m, tea.Quit
+			}
 		case "enter":
 			input := strings.TrimSpace(m.input.Value())
-			if input == "" {
+			if input == "" || m.sending {
 				return m, nil
 			}
-			// Add user message
+			history := m.messages
 			m.messages = append(m.messages, message{text: input, user: true})
+			// Placeholder for the streamed reply.
+			m.messages = append(m.messages, message{text: "", user: false})
 			m.input.Reset()
 			m.sending = true
 			m.err = ""
-			return m, sendMessage(input)
+			m.stream = make(chan tea.Msg)
+			go streamChat(buildRequest(history, input), m.stream)
+			return m, waitForStream(m.stream)
 		case "esc":
 			m.input.Blur()
 		case "tab":
@@ -99,13 +110,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
 
-	case resultMsg:
+	case chunkMsg:
+		m.messages[len(m.messages)-1].text += string(msg)
+		return m, waitForStream(m.stream)
+
+	case doneMsg:
 		m.sending = false
+		m.stream = nil
 		if msg.err != "" {
 			m.err = msg.err
-			m.messages = append(m.messages, message{text: "Error: " + msg.err, user: false})
-		} else {
-			m.messages = append(m.messages, message{text: msg.content, user: false})
+			last := &m.messages[len(m.messages)-1]
+			if last.text == "" {
+				last.text = "Error: " + msg.err
+			}
 		}
 		return m, nil
 
@@ -114,62 +131,90 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-type resultMsg struct {
-	content string
-	err     string
+// chunkMsg carries a piece of a streamed reply; doneMsg ends the stream.
+type chunkMsg string
+
+type doneMsg struct {
+	err string
 }
 
-func sendMessage(userInput string) tea.Cmd {
+func waitForStream(ch chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
-		ctx := getContext()
-		fullPrompt := ctx + "\n\nUser: " + userInput + "\nAI:"
-
-		body := map[string]interface{}{
-			"model":  defaultModel,
-			"messages": []map[string]string{
-				{"role": "system", "content": "You are a privacy-first AI dev agent. Help with code, files, git. Suggest commands in `shell: command`."},
-				{"role": "user", "content": fullPrompt},
-			},
-			"stream": true,
-		}
-
-		jsonData, err := json.Marshal(body)
-		if err != nil {
-			return resultMsg{err: err.Error()}
-		}
-
-		resp, err := http.Post(ollamaURL, "application/json", bytes.NewBuffer(jsonData))
-		if err != nil {
-			return resultMsg{err: err.Error()}
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return resultMsg{err: fmt.Sprintf("HTTP %d", resp.StatusCode)}
-		}
-
-		content := ""
-		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
-			var line map[string]interface{}
-			if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-				continue
-			}
-			if msgI, ok := line["message"].(map[string]interface{}); ok {
-				if delta, ok := msgI["content"].(string); ok && delta != "" {
-					content += delta
-				}
-			}
-			if done, ok := line["done"].(bool); ok && done {
-				break
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			return resultMsg{err: err.Error()}
-		}
-
-		return resultMsg{content: content}
+		return <-ch
 	}
+}
+
+// buildRequest sends the prior conversation plus the new input, with fresh
+// workspace context attached to the new input only.
+func buildRequest(history []message, userInput string) map[string]interface{} {
+	msgs := []map[string]string{{"role": "system", "content": systemPrompt}}
+	for _, h := range history {
+		if h.text == "" {
+			continue
+		}
+		role := "assistant"
+		if h.user {
+			role = "user"
+		}
+		msgs = append(msgs, map[string]string{"role": role, "content": h.text})
+	}
+	msgs = append(msgs, map[string]string{"role": "user", "content": getContext() + "\n\nUser: " + userInput})
+
+	return map[string]interface{}{
+		"model":    defaultModel,
+		"messages": msgs,
+		"stream":   true,
+	}
+}
+
+func streamChat(body map[string]interface{}, ch chan<- tea.Msg) {
+	jsonData, err := json.Marshal(body)
+	if err != nil {
+		ch <- doneMsg{err: err.Error()}
+		return
+	}
+
+	resp, err := http.Post(ollamaURL, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		ch <- doneMsg{err: err.Error()}
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		ch <- doneMsg{err: fmt.Sprintf("HTTP %d", resp.StatusCode)}
+		return
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		var line struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			Done  bool   `json:"done"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+			continue
+		}
+		if line.Error != "" {
+			ch <- doneMsg{err: line.Error}
+			return
+		}
+		if line.Message.Content != "" {
+			ch <- chunkMsg(line.Message.Content)
+		}
+		if line.Done {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		ch <- doneMsg{err: err.Error()}
+		return
+	}
+	ch <- doneMsg{}
 }
 
 func getContext() string {
@@ -239,7 +284,7 @@ func (m model) View() string {
 		}
 	}
 
-	if m.sending {
+	if m.sending && m.messages[len(m.messages)-1].text == "" {
 		b.WriteString("\n\nAI is thinking...")
 	}
 
