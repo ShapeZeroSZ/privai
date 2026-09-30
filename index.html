@@ -2,7 +2,7 @@
 <html>
 <head>
 <title>PrivAI - Privacy-First TUI Dev Agent</title>
-<meta name="description" content="Local Ollama TUI chat for developers. Injects workspace context.">
+<meta name="description" content="Privacy-first terminal chat with a local Ollama model. Streams replies, remembers the conversation, and adds your directory and git context to each question.">
 <style>
 body { font-family: 'Segoe UI', monospace; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; }
 h1 { color: #AAFF00; }
@@ -12,10 +12,10 @@ a { color: #00FFFF; }
 </head>
 <body>
 <h1>PrivAI</h1>
-<p>Privacy-first terminal UI for Ollama-powered dev assistance. Streams responses, injects files/git context.</p>
+<p>Privacy-first terminal UI for Ollama-powered dev assistance. Streams replies, remembers the conversation, and adds your directory and git context to each question. Nothing leaves your machine.</p>
 
 <h2>🚀 Quick Start</h2>
-<pre>git clone &lt;repo&gt;
+<pre>git clone https://github.com/ShapeZeroSZ/privai
 cd privai
 make install
 ollama pull llama3.2
@@ -23,15 +23,17 @@ privai</pre>
 
 <h2>✨ Features</h2>
 <ul>
-<li>Streaming chat with local LLM</li>
-<li>Auto-context: ls, git status/commits</li>
+<li>Streaming chat with a local LLM</li>
+<li>Conversation memory for the whole session</li>
+<li>Scrollable chat history (↑/↓, PgUp/PgDn)</li>
+<li>Auto-context: ls, git status, recent commits</li>
 <li>Env vars: OLLAMA_BASE_URL, OLLAMA_MODEL</li>
-<li>Bubble Tea TUI (keys: Enter send, q quit)</li>
+<li>Bubble Tea TUI (Enter send, Esc then q or Ctrl+C quit)</li>
 <li>MIT License</li>
 </ul>
 
 <h2>📦 GitHub</h2>
-<p><a href="https://github.com/shapezero/privai">shapezero/privai</a> &nbsp; <a href="https://github.com/shapezero/privai/issues">Issues</a> &nbsp; <a href="https://github.com/shapezero/privai/sponsors">Sponsor</a></p>
+<p><a href="https://github.com/ShapeZeroSZ/privai">ShapeZeroSZ/privai</a> &nbsp; <a href="https://github.com/ShapeZeroSZ/privai/issues">Issues</a> &nbsp; <a href="https://github.com/sponsors/ShapeZeroSZ">Sponsor</a></p>
 
 <h2>💰 Pro Plan</h2>
 <p>OSS free. Pro: hosted SaaS ($9/mo), Gumroad bundles (Mac/Windows/Linux).</p>

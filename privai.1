@@ -1,23 +1,62 @@
-.TH PRIVAI 1 &quot;Feb 3, 2026&quot; &quot;1.0&quot; &quot;PrivAI&quot;
+.TH PRIVAI 1 "September 2026" "privai 1.0" "User Commands"
 .SH NAME
-privai \\- TUI chat client for Ollama dev agent
+privai \- privacy-first terminal chat with a local Ollama model for development
 .SH SYNOPSIS
 .B privai
 .SH DESCRIPTION
-PrivAI is a terminal user interface for chatting with a local Ollama LLM (default llama3.2).
-It injects workspace context (ls, git) into prompts for dev assistance.
+.B privai
+is a terminal user interface for chatting with a local Ollama model.
+Each question is sent with a snapshot of the current directory
+(the first 20 lines of
+.BR "ls -la" )
+and, inside a git repository, the output of
+.B git status --short
+and
+.BR "git log --oneline -5" .
+Earlier turns of the conversation are sent as history.
+Replies stream into a scrollable chat view as they are generated.
+Nothing is sent anywhere except the configured Ollama server.
 .SH OPTIONS
-None (TUI app).
+None.
 .SH KEYS
-Enter \\- Send message
-q, Ctrl+C \\- Quit
-Tab \\- Focus input
-Esc \\- Blur input
-.SH PREREQUISITES
-Ollama running on localhost:11434 with llama3.2 model.
+.TP
+.B Enter
+Send the message.
+.TP
+.BR Up ", " Down ", " PgUp ", " PgDn
+Scroll the chat. Works while typing.
+.TP
+.B Esc
+Leave the input box. The chat can then also be scrolled with
+.BR j / k ,
+.BR space / b
+and
+.BR u / d .
+.TP
+.B Tab
+Return to the input box.
+.TP
+.B q
+Quit, when the input box is not focused.
+.TP
+.B Ctrl+C
+Quit.
+.SH ENVIRONMENT
+.TP
+.B OLLAMA_BASE_URL
+Ollama server address. Default: http://localhost:11434
+.TP
+.B OLLAMA_MODEL
+Model to chat with. Default: llama3.2
 .SH FILES
-/usr/local/bin/privai
+.TP
+.I /usr/local/bin/privai
+The program.
+.TP
+.I /usr/local/share/man/man1/privai.1
+This manual page.
 .SH SEE ALSO
-ollama(1), bubbletea(1)
+.BR ollama (1),
+.BR git (1)
 .SH AUTHOR
 cli_craftsman (The Foundry)

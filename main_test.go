@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -96,5 +97,61 @@ func TestEnterStreamsReplyIntoChat(t *testing.T) {
 	msgs := m.(model).messages
 	if len(msgs) != 2 || !msgs[0].user || msgs[0].text != "hi" || msgs[1].text != "ab" {
 		t.Fatalf("unexpected messages: %+v", msgs)
+	}
+}
+
+func longReply(n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "reply line %d\n", i)
+	}
+	return b.String()
+}
+
+func TestViewFitsTerminalAndFollowsNewText(t *testing.T) {
+	var m tea.Model = initialModel()
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 50, Height: 15})
+
+	mm := m.(model)
+	mm.messages = []message{{text: "q", user: true}, {text: "", user: false}}
+	mm.sending = true
+	m = mm
+	m, _ = m.Update(chunkMsg(longReply(40)))
+
+	view := m.(model).View()
+	if got := strings.Count(view, "\n") + 1; got != 15 {
+		t.Fatalf("view is %d lines, want 15", got)
+	}
+	if !strings.Contains(view, "reply line 40") {
+		t.Fatal("newest text not visible while following the reply")
+	}
+	if strings.Contains(view, "reply line 1\n") {
+		t.Fatal("oldest text should have scrolled out of view")
+	}
+}
+
+func TestScrolledUpPositionSurvivesNewText(t *testing.T) {
+	var m tea.Model = initialModel()
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 50, Height: 15})
+	mm := m.(model)
+	mm.messages = []message{{text: "q", user: true}, {text: longReply(40), user: false}}
+	mm.sending = true
+	mm.refreshChat(true)
+	m = mm
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	before := m.(model).chat.YOffset
+	m, _ = m.Update(chunkMsg("more text\n"))
+	if got := m.(model).chat.YOffset; got != before {
+		t.Fatalf("YOffset moved from %d to %d while scrolled up", before, got)
+	}
+	if !strings.Contains(m.(model).View(), "newer messages") {
+		t.Fatal("expected a hint that newer messages are below")
+	}
+
+	// Typing still goes to the input while the chat is scrolled.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if got := m.(model).input.Value(); got != "j" {
+		t.Fatalf("input = %q, want %q", got, "j")
 	}
 }

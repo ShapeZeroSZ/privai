@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -40,9 +41,40 @@ type message struct {
 	user bool
 }
 
+// Rows used by everything except the chat viewport: header, status line and
+// the bordered input box.
+const (
+	headerHeight = 1
+	statusHeight = 1
+	inputHeight  = 3
+	chromeHeight = headerHeight + statusHeight + inputHeight
+)
+
+var (
+	headerStyle = lipgloss.NewStyle().Bold(true)
+
+	userStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FFFF")).
+			Bold(true).
+			Italic(true).
+			Align(lipgloss.Right)
+
+	aiStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#AAFF00")).
+		Margin(1, 2)
+
+	errStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000"))
+	hintStyle = lipgloss.NewStyle().Faint(true)
+
+	inputStyle = lipgloss.NewStyle().
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color("#FFFFFF"))
+)
+
 type model struct {
 	messages []message
 	input    textinput.Model
+	chat     viewport.Model
 	sending  bool
 	stream   chan tea.Msg
 	err      string
@@ -55,13 +87,55 @@ func initialModel() model {
 	ti.Placeholder = "Ask the AI dev agent..."
 	ti.Focus()
 
-	return model{
+	m := model{
 		input:    ti,
 		messages: []message{},
 		sending:  false,
+		chat:     viewport.New(80, 20-chromeHeight),
 		height:   20,
 		width:    80,
 	}
+	m.refreshChat(true)
+	return m
+}
+
+// refreshChat re-renders the conversation into the viewport. It keeps the
+// view pinned to the newest text if it was already at the bottom (or if
+// forced), and otherwise leaves the user's scroll position alone.
+func (m *model) refreshChat(forceBottom bool) {
+	atBottom := m.chat.AtBottom()
+	m.chat.SetContent(m.renderMessages())
+	if forceBottom || atBottom {
+		m.chat.GotoBottom()
+	}
+}
+
+func (m model) renderMessages() string {
+	if len(m.messages) == 0 {
+		return hintStyle.Render("Ask about the code in this directory. Replies stay on this machine.")
+	}
+
+	w := m.chat.Width
+	parts := make([]string, 0, len(m.messages))
+	for _, msg := range m.messages {
+		if msg.user {
+			parts = append(parts, userStyle.Width(w).Render(msg.text))
+		} else if text := strings.TrimRight(msg.text, "\n"); text != "" {
+			// Width covers the text only; the 2-column margins sit outside it.
+			parts = append(parts, aiStyle.Width(max(w-4, 1)).Render(text))
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// isScrollKey reports keys that scroll the chat even while typing. The
+// text input doesn't use them, so there's no conflict.
+func isScrollKey(k string) bool {
+	switch k {
+	case "up", "down", "pgup", "pgdown":
+		return true
+	}
+	return false
 }
 
 func (m model) Init() tea.Cmd {
@@ -75,6 +149,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.chat.Width = msg.Width
+		m.chat.Height = max(msg.Height-chromeHeight, 1)
+		// Border takes 2 columns; leave 1 for the prompt's cursor.
+		m.input.Width = max(msg.Width-2-len(m.input.Prompt)-1, 1)
+		m.refreshChat(false)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -99,19 +178,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sending = true
 			m.err = ""
 			m.stream = make(chan tea.Msg)
+			m.refreshChat(true)
 			go streamChat(buildRequest(history, input), m.stream)
 			return m, waitForStream(m.stream)
 		case "esc":
 			m.input.Blur()
+			return m, nil
 		case "tab":
-			m.input.Focus()
+			return m, m.input.Focus()
 		}
-		// Update input
+		// While typing, only the scroll keys reach the chat; once the input
+		// is blurred (Esc), the viewport's full key map applies.
+		if !m.input.Focused() || isScrollKey(msg.String()) {
+			m.chat, cmd = m.chat.Update(msg)
+			return m, cmd
+		}
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
 
 	case chunkMsg:
 		m.messages[len(m.messages)-1].text += string(msg)
+		m.refreshChat(false)
 		return m, waitForStream(m.stream)
 
 	case doneMsg:
@@ -124,6 +211,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				last.text = "Error: " + msg.err
 			}
 		}
+		m.refreshChat(false)
 		return m, nil
 
 	}
@@ -250,69 +338,24 @@ func (m model) View() string {
 		return "Initializing..."
 	}
 
-	var b strings.Builder
+	header := headerStyle.Render("--- PrivAI Dev Agent ---")
 
-	userStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#00FFFF")).
-		Bold(true).
-		Italic(true).
-		Align(lipgloss.Right)
-
-	aiStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#AAFF00")).
-		Bold(false).
-		Margin(1, 2)
-
-	errStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FF0000"))
-
-	chatLines := (m.height - 5) / 2
-	numMsg := min(len(m.messages), chatLines)
-	visibleMsgs := m.messages[len(m.messages)-numMsg:]
-
-	b.WriteString("--- PrivAI Dev Agent ---")
-	b.WriteString("\n")
-
-	for i, msg := range visibleMsgs {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		if msg.user {
-			b.WriteString(userStyle.Render(msg.text))
-		} else {
-			b.WriteString(aiStyle.Render(msg.text))
-		}
+	var status string
+	switch {
+	case m.sending && m.messages[len(m.messages)-1].text == "":
+		status = "AI is thinking..."
+	case m.err != "":
+		status = errStyle.Render(m.err)
+	case !m.chat.AtBottom():
+		status = hintStyle.Render(fmt.Sprintf("%3.f%% · ↓/PgDn for newer messages", m.chat.ScrollPercent()*100))
+	case !m.input.Focused():
+		status = hintStyle.Render("Scrolling: j/k ↑/↓ PgUp/PgDn · Tab to type · q to quit")
 	}
+	status = lipgloss.NewStyle().MaxWidth(m.width).Render(status)
 
-	if m.sending && m.messages[len(m.messages)-1].text == "" {
-		b.WriteString("\n\nAI is thinking...")
-	}
+	input := inputStyle.Width(max(m.width-2, 1)).Render(m.input.View())
 
-	if m.err != "" {
-		b.WriteString("\n")
-		b.WriteString(errStyle.Render(m.err))
-	}
-
-	inputStyle := lipgloss.NewStyle().
-		Height(1).
-		MarginTop(1).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("#FFFFFF"))
-	input := inputStyle.Render(m.input.View())
-
-	b.WriteString(input)
-
-	return lipgloss.NewStyle().
-		Width(m.width).
-		Height(m.height).
-		Render(b.String())
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return lipgloss.JoinVertical(lipgloss.Left, header, m.chat.View(), status, input)
 }
 
 func main() {
